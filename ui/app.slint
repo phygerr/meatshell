@@ -333,6 +333,9 @@ export component AppWindow inherits Window {
     in-out property <bool> wallpaper-active <=> Theme.wallpaper-active;
     in-out property <color> wp-accent <=> Theme.wp-accent;
     in-out property <color> wp-tint <=> Theme.wp-tint;
+    // Colour theme id ("" = default, "phyger" = Phyger). Rust drives this.
+    in-out property <string> theme-id <=> Theme.theme-id;
+    callback set-theme(string);                    // apply + persist theme id
     in property <[string]> term-fonts;             // installed monospace families
     in-out property <bool> interface-open: false;  // Interface settings overlay
     // Interface card position (draggable by its title bar, clamped inside the
@@ -2778,6 +2781,8 @@ export component AppWindow inherits Window {
                     custom-wallpaper-name: root.custom-wallpaper-name;
                     set-wallpaper(v) => { root.set-wallpaper(v); }
                     pick-wallpaper-file() => { root.pick-wallpaper-file(); }
+                    theme-id: root.theme-id;
+                    set-theme(v) => { root.set-theme(v); }
                     set-term-font(v) => { root.set-term-font(v); }
                     set-term-font-size(v) => { root.set-term-font-size(v); }
                     set-ui-scale(v) => { root.set-ui-scale(v); }

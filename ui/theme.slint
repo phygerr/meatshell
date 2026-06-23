@@ -1,7 +1,11 @@
 // Central design tokens for meatshell.
 //
-// All colour values are reactive: change `dark` and every widget repaints
-// automatically via Slint's property-binding system.
+// All colour values are reactive: change `dark` or `theme-id` and every widget
+// repaints automatically via Slint's property-binding system.
+//
+// Themes:
+//   ""       — Default (original meatshell look).
+//   "phyger" — Phyger theme (light + dark variants).
 //
 // Dark palette  — high-contrast charcoal (original meatshell look).
 // Light palette — Apple macOS-inspired:
@@ -13,6 +17,9 @@
 export global Theme {
     // Set by Rust on startup (system detection) and on user toggle.
     in-out property <bool> dark: true;
+
+    // Theme id: "" = default, "phyger" = Phyger. Set by Rust from config.
+    in-out property <string> theme-id: "";
 
     // --- Immersive wallpaper (set by Rust from the wallpaper module) -------
     // When a wallpaper is active the window paints `wallpaper` behind everything
@@ -34,17 +41,70 @@ export global Theme {
             : base;
     }
 
+    // --- Phyger theme colours (from gpui-component Phyger theme) -----------
+    // Light
+    property <color> phyger-l-bg:          #F8F9FC;
+    property <color> phyger-l-panel:       #ECEEF3;
+    property <color> phyger-l-panel-alt:   #E2E6EE;
+    property <color> phyger-l-elevated:    #D0D5DD;
+    property <color> phyger-l-hover:       #E8EDF4;
+    property <color> phyger-l-active:      #DCE2EB;
+    property <color> phyger-l-border-sub:  #D0D5DD;
+    property <color> phyger-l-border-str:  #C0C7D0;
+    property <color> phyger-l-text1:       #2B2D30;
+    property <color> phyger-l-text2:       #5A5E66;
+    property <color> phyger-l-text3:       #7A7F88;
+    property <color> phyger-l-accent:      #2563EB;
+    property <color> phyger-l-term-bg:     #F8F9FC;
+    property <color> phyger-l-term-fg:     #2B2D30;
+    // Dark
+    property <color> phyger-d-bg:          #1A1D23;
+    property <color> phyger-d-panel:       #1E2229;
+    property <color> phyger-d-panel-alt:   #252A34;
+    property <color> phyger-d-elevated:    #333A48;
+    property <color> phyger-d-hover:       #252A34;
+    property <color> phyger-d-active:      #2E3542;
+    property <color> phyger-d-border-sub:  #2E3340;
+    property <color> phyger-d-border-str:  #3A4050;
+    property <color> phyger-d-text1:       #C8CED8;
+    property <color> phyger-d-text2:       #8B92A0;
+    property <color> phyger-d-text3:       #6B7280;
+    property <color> phyger-d-accent:      #5BA0E0;
+    property <color> phyger-d-term-bg:     #1A1D23;
+    property <color> phyger-d-term-fg:     #C8CED8;
+
     // --- Palette -----------------------------------------------------------
     // Opaque window base — the wallpaper Image covers it when active, so panels
     // frost over the image rather than over this.
-    out property <brush> window-base: dark ? #1b1d23 : #f5f5f7;
+    out property <brush> window-base:
+        root.theme-id == "phyger"
+            ? (dark ? phyger-d-bg : phyger-l-bg)
+            : (dark ? #1b1d23 : #f5f5f7);
 
-    property <color> base-bg-root:      dark ? #1b1d23 : #f5f5f7;
-    property <color> base-bg-panel:     dark ? #23262d : #ffffff;
-    property <color> base-bg-panel-alt: dark ? #2a2d35 : #f2f2f7;
-    property <color> base-bg-elevated:  dark ? #30333c : #e8e8ed;
-    property <color> base-bg-hover:     dark ? #373a44 : #e0e0e6;
-    property <color> base-bg-active:    dark ? #3f4350 : #d8d8de;
+    property <color> base-bg-root:
+        root.theme-id == "phyger"
+            ? (dark ? phyger-d-bg : phyger-l-bg)
+            : (dark ? #1b1d23 : #f5f5f7);
+    property <color> base-bg-panel:
+        root.theme-id == "phyger"
+            ? (dark ? phyger-d-panel : phyger-l-panel)
+            : (dark ? #23262d : #ffffff);
+    property <color> base-bg-panel-alt:
+        root.theme-id == "phyger"
+            ? (dark ? phyger-d-panel-alt : phyger-l-panel-alt)
+            : (dark ? #2a2d35 : #f2f2f7);
+    property <color> base-bg-elevated:
+        root.theme-id == "phyger"
+            ? (dark ? phyger-d-elevated : phyger-l-elevated)
+            : (dark ? #30333c : #e8e8ed);
+    property <color> base-bg-hover:
+        root.theme-id == "phyger"
+            ? (dark ? phyger-d-hover : phyger-l-hover)
+            : (dark ? #373a44 : #e0e0e6);
+    property <color> base-bg-active:
+        root.theme-id == "phyger"
+            ? (dark ? phyger-d-active : phyger-l-active)
+            : (dark ? #3f4350 : #d8d8de);
 
     // bg-root frosts lighter (lower alpha) so the wallpaper reads clearly in
     // empty / inset areas; panels stay mostly opaque for legible text.
@@ -55,16 +115,40 @@ export global Theme {
     out property <brush> bg-hover:     frost(base-bg-hover, min(1.0, root.panel-alpha + 0.04));
     out property <brush> bg-active:    frost(base-bg-active, min(1.0, root.panel-alpha + 0.08));
 
-    out property <brush> border-subtle: dark ? #3a3d46 : #e2e2e8;
-    out property <brush> border-strong: dark ? #4a4e59 : #c7c7cc;
+    out property <brush> border-subtle:
+        root.theme-id == "phyger"
+            ? (dark ? phyger-d-border-sub : phyger-l-border-sub)
+            : (dark ? #3a3d46 : #e2e2e8);
+    out property <brush> border-strong:
+        root.theme-id == "phyger"
+            ? (dark ? phyger-d-border-str : phyger-l-border-str)
+            : (dark ? #4a4e59 : #c7c7cc);
 
-    out property <brush> text-primary:   dark ? #e6e8ee : #1d1d1f;
-    out property <brush> text-secondary: dark ? #b4b9c4 : #6e6e73;
-    out property <brush> text-muted:     dark ? #9196a3 : #aeaeb2;
+    out property <brush> text-primary:
+        root.theme-id == "phyger"
+            ? (dark ? phyger-d-text1 : phyger-l-text1)
+            : (dark ? #e6e8ee : #1d1d1f);
+    out property <brush> text-secondary:
+        root.theme-id == "phyger"
+            ? (dark ? phyger-d-text2 : phyger-l-text2)
+            : (dark ? #b4b9c4 : #6e6e73);
+    out property <brush> text-muted:
+        root.theme-id == "phyger"
+            ? (dark ? phyger-d-text3 : phyger-l-text3)
+            : (dark ? #9196a3 : #aeaeb2);
 
-    out property <brush> accent:         root.wallpaper-active ? root.wp-accent          : (dark ? #4a90e2 : #0071e3);
-    out property <brush> accent-hover:   root.wallpaper-active ? root.wp-accent.brighter(0.12) : (dark ? #5aa0f2 : #0077ed);
-    out property <brush> accent-pressed: root.wallpaper-active ? root.wp-accent.darker(0.12)   : (dark ? #3a80d2 : #006adb);
+    out property <brush> accent:
+        root.wallpaper-active ? root.wp-accent
+        : root.theme-id == "phyger" ? (dark ? phyger-d-accent : phyger-l-accent)
+        : (dark ? #4a90e2 : #0071e3);
+    out property <brush> accent-hover:
+        root.wallpaper-active ? root.wp-accent.brighter(0.12)
+        : root.theme-id == "phyger" ? (dark ? #6CB4EE : #3B72F0)
+        : (dark ? #5aa0f2 : #0077ed);
+    out property <brush> accent-pressed:
+        root.wallpaper-active ? root.wp-accent.darker(0.12)
+        : root.theme-id == "phyger" ? (dark ? #4A90D9 : #1D4ED8)
+        : (dark ? #3a80d2 : #006adb);
 
     out property <brush> success: dark ? #4ec9b0 : #34c759;
     out property <brush> warning: dark ? #e2a84a : #ff9f0a;
@@ -73,9 +157,15 @@ export global Theme {
     // Terminal uses its own background so it stays readable regardless of
     // what the shell / remote app outputs via ANSI colour codes. With a
     // wallpaper it frosts (kept neutral, not tinted) so text stays legible.
-    property <color> base-term-bg: dark ? #0e0f13 : #fafafa;
+    property <color> base-term-bg:
+        root.theme-id == "phyger"
+            ? (dark ? phyger-d-term-bg : phyger-l-term-bg)
+            : (dark ? #0e0f13 : #fafafa);
     out property <brush> term-bg: root.wallpaper-active ? base-term-bg.with-alpha(0.72) : base-term-bg;
-    out property <brush> term-fg: dark ? #d4d4d4 : #2d2d2f;
+    out property <brush> term-fg:
+        root.theme-id == "phyger"
+            ? (dark ? phyger-d-term-fg : phyger-l-term-fg)
+            : (dark ? #d4d4d4 : #2d2d2f);
 
     // Global UI scale (#100/#117/#118). Rust sets this from the saved setting;
     // all font sizes and spacing/radii below multiply by it, so the whole UI

@@ -204,6 +204,9 @@ export component InterfacePanel inherits Rectangle {
     callback set-download-always-ask(bool);
     callback set-wallpaper(string);    // none / builtin selection
     callback pick-wallpaper-file();    // open the OS file dialog (Rust)
+    // Colour theme id: "" = default, "phyger" = Phyger.
+    in property <string> theme-id;
+    callback set-theme(string);
 
     HorizontalLayout {
         // --- Left nav ------------------------------------------------------
@@ -223,6 +226,11 @@ export component InterfacePanel inherits Rectangle {
                     icon: "\u{E1BC}"; label: root.lang-en ? "Wallpaper" : "壁纸";
                     active: root.ifd-page == "wallpaper";
                     clicked => { root.ifd-page = "wallpaper"; }
+                }
+                NavItem {
+                    icon: "\u{E40D}"; label: root.lang-en ? "Theme" : "主题";
+                    active: root.ifd-page == "theme";
+                    clicked => { root.ifd-page = "theme"; }
                 }
                 NavItem {
                     icon: "\u{E2C7}"; label: "SFTP";
@@ -465,6 +473,133 @@ export component InterfacePanel inherits Rectangle {
                             color: Theme.text-muted; font-size: 11px;
                             width: 150px; overflow: elide;
                         }
+                    }
+                }
+            }
+
+            // --- Theme page -------------------------------------------
+            if root.ifd-page == "theme" : VerticalLayout {
+                padding-left: 20px;
+                padding-right: 20px;
+                padding-top: 14px;
+                spacing: 0;
+                alignment: start;
+
+                SectionHeader { text: root.lang-en ? "THEME" : "主题"; height: 24px; }
+                Text {
+                    text: root.lang-en
+                        ? "Choose a colour theme. Each theme supports both light and dark mode."
+                        : "选择一个配色主题。每个主题都支持浅色和深色模式。";
+                    color: Theme.text-muted; font-size: 11px; wrap: word-wrap;
+                }
+                Rectangle { height: 14px; }
+
+                HorizontalLayout {
+                    spacing: 14px;
+                    alignment: start;
+
+                    // --- Default theme card ---
+                    VerticalLayout {
+                        spacing: 6px;
+                        Rectangle {
+                            width: 140px; height: 80px;
+                            border-radius: 8px;
+                            border-width: root.theme-id == "" ? 3px : 1px;
+                            border-color: root.theme-id == "" ? Theme.accent : Theme.border-strong;
+                            clip: true;
+                            // Preview: two-tone strip (light top, dark bottom).
+                            VerticalLayout {
+                                Rectangle {
+                                    background: #f5f5f7;
+                                    horizontal-stretch: 1;
+                                    HorizontalLayout {
+                                        padding: 8px;
+                                        spacing: 4px;
+                                        Rectangle { width: 8px; height: 8px; border-radius: 4px; background: #0071e3; }
+                                        Rectangle { width: 36px; height: 8px; border-radius: 2px; background: #e2e2e8; }
+                                        Rectangle { width: 36px; height: 8px; border-radius: 2px; background: #e2e2e8; }
+                                    }
+                                }
+                                Rectangle {
+                                    background: #1b1d23;
+                                    horizontal-stretch: 1;
+                                    HorizontalLayout {
+                                        padding: 8px;
+                                        spacing: 4px;
+                                        Rectangle { width: 8px; height: 8px; border-radius: 4px; background: #4a90e2; }
+                                        Rectangle { width: 36px; height: 8px; border-radius: 2px; background: #3a3d46; }
+                                        Rectangle { width: 36px; height: 8px; border-radius: 2px; background: #3a3d46; }
+                                    }
+                                }
+                            }
+                            if root.theme-id == "" : Rectangle {
+                                x: parent.width - self.width - 5px;
+                                y: 5px;
+                                width: 18px; height: 18px; border-radius: 9px;
+                                background: Theme.accent;
+                                Text { text: "\u{E5CA}"; font-family: "Material Icons"; color: white;
+                                       font-size: 13px; width: 100%; height: 100%;
+                                       horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            ta-default := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.set-theme(""); }
+                            }
+                        }
+                        Text { text: root.lang-en ? "Default" : "默认"; font-size: 11px;
+                               color: Theme.text-secondary; horizontal-alignment: center; }
+                    }
+
+                    // --- Phyger theme card ---
+                    VerticalLayout {
+                        spacing: 6px;
+                        Rectangle {
+                            width: 140px; height: 80px;
+                            border-radius: 8px;
+                            border-width: root.theme-id == "phyger" ? 3px : 1px;
+                            border-color: root.theme-id == "phyger" ? Theme.accent : Theme.border-strong;
+                            clip: true;
+                            // Preview: two-tone strip (light top, dark bottom).
+                            VerticalLayout {
+                                Rectangle {
+                                    background: #F8F9FC;
+                                    horizontal-stretch: 1;
+                                    HorizontalLayout {
+                                        padding: 8px;
+                                        spacing: 4px;
+                                        Rectangle { width: 8px; height: 8px; border-radius: 4px; background: #2563EB; }
+                                        Rectangle { width: 36px; height: 8px; border-radius: 2px; background: #D0D5DD; }
+                                        Rectangle { width: 36px; height: 8px; border-radius: 2px; background: #D0D5DD; }
+                                    }
+                                }
+                                Rectangle {
+                                    background: #1A1D23;
+                                    horizontal-stretch: 1;
+                                    HorizontalLayout {
+                                        padding: 8px;
+                                        spacing: 4px;
+                                        Rectangle { width: 8px; height: 8px; border-radius: 4px; background: #5BA0E0; }
+                                        Rectangle { width: 36px; height: 8px; border-radius: 2px; background: #2E3340; }
+                                        Rectangle { width: 36px; height: 8px; border-radius: 2px; background: #2E3340; }
+                                    }
+                                }
+                            }
+                            if root.theme-id == "phyger" : Rectangle {
+                                x: parent.width - self.width - 5px;
+                                y: 5px;
+                                width: 18px; height: 18px; border-radius: 9px;
+                                background: Theme.accent;
+                                Text { text: "\u{E5CA}"; font-family: "Material Icons"; color: white;
+                                       font-size: 13px; width: 100%; height: 100%;
+                                       horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            ta-phyger := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.set-theme("phyger"); }
+                            }
+                        }
+                        Text { text: "Phyger"; font-size: 11px;
+                               color: Theme.text-secondary; horizontal-alignment: center; }
                     }
                 }
             }

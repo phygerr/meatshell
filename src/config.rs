@@ -413,6 +413,9 @@ pub struct ConfigFile {
     /// Theme preference: "system" (default) | "dark" | "light".
     #[serde(default)]
     pub theme_pref: String,
+    /// Colour theme id: "" (default = original) | "phyger".
+    #[serde(default)]
+    pub theme_id: String,
     /// Terminal font family. Empty = the built-in default ("Meatshell Mono").
     #[serde(default)]
     pub font_family: String,
@@ -721,6 +724,15 @@ impl ConfigStore {
 
     pub fn set_theme_pref(&mut self, pref: String) {
         self.cache.theme_pref = pref;
+    }
+
+    /// Colour theme id: "" (default = original) | "phyger".
+    pub fn theme_id(&self) -> &str {
+        &self.cache.theme_id
+    }
+
+    pub fn set_theme_id(&mut self, id: String) {
+        self.cache.theme_id = id;
     }
 
     /// Terminal font family ("" = built-in default).

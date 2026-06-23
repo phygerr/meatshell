@@ -277,6 +277,12 @@ pub fn run() -> Result<()> {
         window.set_dark_mode(is_dark);
     }
 
+    // Apply the saved colour theme id ("" = default, "phyger" = Phyger).
+    {
+        let tid = store.borrow().theme_id().to_string();
+        window.set_theme_id(tid.into());
+    }
+
     // Apply the saved terminal font (Interface settings). An empty family keeps
     // the built-in default; the size always applies (defaults to 13).
     {
@@ -613,6 +619,26 @@ pub fn run() -> Result<()> {
             let pref = if next_dark { "dark" } else { "light" };
             let mut s = store.borrow_mut();
             s.set_theme_pref(pref.to_string());
+            let _ = s.save();
+        });
+    }
+
+    // Colour theme selection (Interface settings): switch between "" (default)
+    // and "phyger". The Theme.global property drives all colour recomputation.
+    {
+        let weak = window.as_weak();
+        let store = store.clone();
+        let proc_weak = proc_win.as_weak();
+        window.on_set_theme(move |id: SharedString| {
+            let id = id.to_string();
+            if let Some(w) = weak.upgrade() {
+                w.set_theme_id(id.clone().into());
+                if let Some(p) = proc_weak.upgrade() {
+                    sync_proc_theme(&w, &p);
+                }
+            }
+            let mut s = store.borrow_mut();
+            s.set_theme_id(id);
             let _ = s.save();
         });
     }
@@ -2163,6 +2189,7 @@ fn proc_rows(procs: &[ProcInfo]) -> Vec<ProcRow> {
 /// compile-time (dark) defaults until we copy these across (#23).
 fn sync_proc_theme(main: &AppWindow, proc: &ProcWindow) {
     proc.set_dark_mode(main.get_dark_mode());
+    proc.set_theme_id(main.get_theme_id());
     proc.set_ui_scale(main.get_ui_scale());
     proc.set_ui_font_family(main.get_ui_font_family());
     // Mirror the immersive wallpaper so the detached window shares the frosted
