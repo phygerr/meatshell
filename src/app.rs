@@ -5878,6 +5878,8 @@ impl TermBuffer {
                     last_content = r as i32;
                 }
                 for hs in runs {
+                    let hl = highlight_override(&hs.text, self.is_dark)
+                        .unwrap_or(slint::Color::default());
                     spans.push(TermSpan {
                         cjk: contains_cjk(&hs.text),
                         text: hs.text.into(),
@@ -5887,6 +5889,7 @@ impl TermBuffer {
                         row: r as i32,
                         col: hs.col,
                         cells: hs.cells,
+                        highlight: hl,
                     });
                 }
                 displayed.push(plain.trim_end().to_string());
@@ -5930,6 +5933,8 @@ impl TermBuffer {
                 &live[idx - hist_len]
             };
             for hs in &line.1 {
+                let hl = highlight_override(&hs.text, self.is_dark)
+                    .unwrap_or(slint::Color::default());
                 spans.push(TermSpan {
                     text: hs.text.clone().into(),
                     fg: vt_color_to_slint(hs.fg, hs.bold, self.is_dark),
@@ -5939,6 +5944,7 @@ impl TermBuffer {
                     col: hs.col,
                     cells: hs.cells,
                     cjk: contains_cjk(&hs.text),
+                    highlight: hl,
                 });
             }
             displayed.push(line.0.trim_end().to_string());
@@ -5978,6 +5984,121 @@ fn contains_cjk(s: &str) -> bool {
             | 0xFF00..=0xFFEF     // fullwidth / halfwidth forms (，！？：；)
             | 0x20000..=0x2FA1F)  // CJK ext B–F + compat supplement
     })
+}
+
+/// Pattern-based syntax highlighting for terminal spans.
+///
+/// Checks the span text against a list of known keywords and format patterns
+/// (error/success/warning, log levels, IP addresses, HTTP status codes, etc.)
+/// and returns an override colour when a match is found. The caller should use
+/// this colour instead of the span's ANSI foreground.
+///
+/// Returns `None` when no pattern matches (keep the original ANSI colour).
+fn highlight_override(text: &str, is_dark: bool) -> Option<slint::Color> {
+    let t = text.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let low = t.to_ascii_lowercase();
+
+    // Helper: true if `keyword` appears as a whole word in `low`.
+    let has_word = |keyword: &str| -> bool {
+        let haystack = low.as_str();
+        let needle = keyword;
+        let mut start = 0;
+        while let Some(pos) = haystack[start..].find(needle) {
+            let abs = start + pos;
+            let before_ok = abs == 0
+                || !haystack.as_bytes()[abs - 1].is_ascii_alphanumeric();
+            let after_ok = abs + needle.len() >= haystack.len()
+                || !haystack.as_bytes()[abs + needle.len()].is_ascii_alphanumeric();
+            if before_ok && after_ok {
+                return true;
+            }
+            start = abs + 1;
+        }
+        false
+    };
+
+    // Error keywords → red
+    for kw in ["error", "failed", "fatal", "exception", "panic", "abort", "critical"] {
+        if has_word(kw) {
+            return Some(if is_dark { slint::Color::from_rgb_u8(0xf1, 0x4c, 0x4c) }
+                        else      { slint::Color::from_rgb_u8(0xd3, 0x2f, 0x2f) });
+        }
+    }
+    // Success keywords → green
+    for kw in ["success", "succeeded", "passed", "complete", "completed", "done"] {
+        if has_word(kw) {
+            return Some(if is_dark { slint::Color::from_rgb_u8(0x23, 0xd1, 0x8b) }
+                        else      { slint::Color::from_rgb_u8(0x2e, 0x7d, 0x32) });
+        }
+    }
+    // Warning keywords → yellow
+    for kw in ["warn", "warning", "deprecated", "caution", "attention"] {
+        if has_word(kw) {
+            return Some(if is_dark { slint::Color::from_rgb_u8(0xe5, 0xe5, 0x10) }
+                        else      { slint::Color::from_rgb_u8(0xbf, 0x8c, 0x00) });
+        }
+    }
+    // Log level prefixes (e.g. "[INFO]", "ERROR:", "WARN ") → yellow
+    for lvl in ["[info]", "[debug]", "[error]", "[warn]", "[fatal]", "[trace]",
+                "info:", "debug:", "error:", "warn:", "fatal:", "trace:"] {
+        if low.contains(lvl) {
+            return Some(if is_dark { slint::Color::from_rgb_u8(0xe5, 0xe5, 0x10) }
+                        else      { slint::Color::from_rgb_u8(0xbf, 0x8c, 0x00) });
+        }
+    }
+
+    // IPv4 address → cyan
+    if looks_like_ipv4(t) {
+        return Some(if is_dark { slint::Color::from_rgb_u8(0x11, 0xa8, 0xcd) }
+                    else      { slint::Color::from_rgb_u8(0x00, 0x83, 0x8f) });
+    }
+    // IPv6 address → cyan
+    if t.contains(':') && t.len() >= 3 && t.len() <= 45
+        && t.chars().all(|c| c.is_ascii_hexdigit() || c == ':')
+        && t.matches(':').count() >= 2
+    {
+        return Some(if is_dark { slint::Color::from_rgb_u8(0x11, 0xa8, 0xcd) }
+                    else      { slint::Color::from_rgb_u8(0x00, 0x83, 0x8f) });
+    }
+
+    // HTTP status patterns → blue
+    if low.starts_with("http/") || low.starts_with("http ") || low.starts_with("https ") {
+        return Some(if is_dark { slint::Color::from_rgb_u8(0x3b, 0x8e, 0xea) }
+                    else      { slint::Color::from_rgb_u8(0x15, 0x65, 0xc0) });
+    }
+    if low.starts_with("status:") || low.starts_with("status ") {
+        return Some(if is_dark { slint::Color::from_rgb_u8(0x3b, 0x8e, 0xea) }
+                    else      { slint::Color::from_rgb_u8(0x15, 0x65, 0xc0) });
+    }
+
+    // Exit status → red
+    if low.starts_with("exit code") || low.starts_with("exit status") || low.starts_with("exit:") {
+        return Some(if is_dark { slint::Color::from_rgb_u8(0xf1, 0x4c, 0x4c) }
+                    else      { slint::Color::from_rgb_u8(0xd3, 0x2f, 0x2f) });
+    }
+
+    // MAC address → magenta
+    if t.len() == 17 && t.chars().enumerate().all(|(i, c)| {
+        c.is_ascii_hexdigit() || ((i + 1) % 3 == 0 && c == ':')
+    }) && t.matches(':').count() == 5
+    {
+        return Some(if is_dark { slint::Color::from_rgb_u8(0xd6, 0x70, 0xd6) }
+                    else      { slint::Color::from_rgb_u8(0x8e, 0x24, 0xaa) });
+    }
+
+    None
+}
+
+/// Quick check: does `s` look like an IPv4 address (e.g. "192.168.1.1")?
+fn looks_like_ipv4(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    parts.iter().all(|p| p.parse::<u8>().is_ok())
 }
 
 /// 16-colour ANSI palette for **dark** terminals (VS Code "Dark+" values).

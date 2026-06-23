@@ -24,6 +24,7 @@ export struct TermSpan {
     col: int,
     cells: int,
     cjk: bool,   // contains CJK chars → render with the CJK-capable font (#54)
+    highlight: color, // pattern-based override (transparent = use fg)
 }
 
 // A find-match highlight rectangle on the terminal grid.
@@ -515,7 +516,7 @@ export component TerminalView inherits Rectangle {
                                 x: 0px;
                                 y: 0px;
                                 text: span.text;
-                                color: span.fg;
+                                color: span.highlight != transparent ? span.highlight : span.fg;
                                 // CJK spans use the CJK-capable UI font: the mono
                                 // terminal font lacks CJK glyphs and Slint tofu's
                                 // *isolated* CJK punctuation (、。,) on fallback (#54).
