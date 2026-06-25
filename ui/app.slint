@@ -328,6 +328,9 @@ export component AppWindow inherits Window {
     in-out property <length> term-font-size <=> Theme.term-font-size;
     in-out property <float> ui-scale <=> Theme.ui-scale;   // global UI zoom (#100)
     in-out property <string> ui-font-family <=> Theme.ui-font-family;
+    // Window focused & visible — Rust drives it from winit events; gates the
+    // cursor blink so an idle background window stops repainting (#127).
+    in-out property <bool> window-focused <=> Theme.window-focused;
     // Wallpaper / immersive theming — Rust drives these from the wallpaper module.
     in-out property <image> wallpaper-img <=> Theme.wallpaper;
     in-out property <bool> wallpaper-active <=> Theme.wallpaper-active;
@@ -395,6 +398,15 @@ export component AppWindow inherits Window {
     in-out property <bool> cred-remember: false;   // persist to the saved session
     callback cred-accept();                        // use the entered credentials
     callback cred-reject();                        // cancel the connection
+    // MFA / keyboard-interactive prompt (#86-MFA). Rust opens this when a bastion
+    // (e.g. JumpServer with MFA) sends a verification-code challenge mid-login.
+    in-out property <bool> mfa-prompt-open: false;
+    in-out property <string> mfa-host;             // host shown in the dialog title
+    in-out property <string> mfa-prompt;           // the server's prompt text
+    in-out property <bool> mfa-echo: false;        // false = hide typed input
+    in-out property <string> mfa-answer;           // the entered code
+    callback mfa-submit();                         // send the entered answer
+    callback mfa-cancel();                         // cancel the connection
     // Group create / rename dialog (#41).
     in-out property <bool> group-dialog-open: false;
     in-out property <string> group-dialog-orig;    // "" = create, else rename
@@ -481,6 +493,7 @@ export component AppWindow inherits Window {
     in-out property <string> dialog-stop-bits: "1";
     in-out property <string> dialog-parity: "none";
     in-out property <string> dialog-flow: "none";
+    in-out property <bool> dialog-disable-shell-integration: false;
 
     // Delete-confirmation modal state (#28).
     in-out property <bool> confirm-delete-open: false;
@@ -2243,6 +2256,23 @@ export component AppWindow inherits Window {
         height: parent.height;
         background: #00000088;
         TouchArea { clicked => { root.confirm-close-open = false; } }
+        // Grab the keyboard so the terminal beneath stops receiving input, and
+        // make the dialog operable without the mouse: Enter/Space close, Esc
+        // cancels (so X → Space closes, X → Esc backs out) (#140-3).
+        FocusScope {
+            init => { self.focus(); }
+            key-pressed(e) => {
+                if (e.text == Key.Escape) {
+                    root.confirm-close-open = false;
+                    accept
+                } else if (e.text == Key.Return || e.text == " ") {
+                    root.confirm-close-yes();
+                    accept
+                } else {
+                    accept   // modal: swallow everything else
+                }
+            }
+        }
 
         Rectangle {
             x: (parent.width - self.width) / 2;
@@ -2427,11 +2457,18 @@ export component AppWindow inherits Window {
                     }
                 }
 
+                // Scrollable so the list never overflows the fixed-height card (#140).
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        spacing: 5px;
+
                 Text { text: root.lang-en ? "Terminal" : "终端";
                        color: Theme.text-muted; font-size: Theme.fs-xs; }
                 ShortcutRow { keys: "Ctrl+Shift+C"; desc: root.lang-en ? "Copy selection" : "复制选中内容"; }
                 ShortcutRow { keys: "Ctrl+V"; desc: root.lang-en ? "Paste" : "粘贴"; }
                 ShortcutRow { keys: "Ctrl+F"; desc: root.lang-en ? "Find in terminal" : "查找"; }
+                ShortcutRow { keys: "Ctrl+Shift+R"; desc: root.lang-en ? "Jump to command history search" : "跳到命令历史搜索"; }
                 ShortcutRow { keys: root.lang-en ? "Drag" : "鼠标拖动"; desc: root.lang-en ? "Select text" : "选择文本"; }
                 ShortcutRow { keys: root.lang-en ? "Wheel / Scrollbar" : "滚轮 / 滚动条"; desc: root.lang-en ? "Scroll history" : "滚动历史"; }
 
@@ -2440,12 +2477,15 @@ export component AppWindow inherits Window {
                        color: Theme.text-muted; font-size: Theme.fs-xs; }
                 ShortcutRow { keys: "Enter"; desc: root.lang-en ? "Send command" : "发送命令"; }
                 ShortcutRow { keys: "↑ / ↓"; desc: root.lang-en ? "Previous / next in history" : "上一条 / 下一条历史"; }
+                ShortcutRow { keys: "Ctrl+R"; desc: root.lang-en ? "Search history (↑↓ select, Enter run, Esc close)" : "搜索命令历史(↑↓ 选择,回车执行,Esc 关闭)"; }
+                ShortcutRow { keys: "Esc"; desc: root.lang-en ? "Close history / focus terminal" : "关闭历史 / 聚焦终端"; }
                 ShortcutRow { keys: "Ctrl+A"; desc: root.lang-en ? "Move to start of line" : "移到行首"; }
                 ShortcutRow { keys: "Ctrl+E"; desc: root.lang-en ? "Move to end of line" : "移到行尾"; }
                 ShortcutRow { keys: "Ctrl+K"; desc: root.lang-en ? "Delete to end of line" : "删除到行尾"; }
                 ShortcutRow { keys: "Ctrl+U"; desc: root.lang-en ? "Delete to start of line" : "删除到行首"; }
-
-                Rectangle { vertical-stretch: 1; }
+                        Rectangle { height: 2px; }
+                    }
+                }
             }
         }
     }
@@ -2564,6 +2604,7 @@ export component AppWindow inherits Window {
         draft-stop-bits <=> root.dialog-stop-bits;
         draft-parity <=> root.dialog-parity;
         draft-flow <=> root.dialog-flow;
+        draft-disable-shell-integration <=> root.dialog-disable-shell-integration;
         forwards: root.dialog-forwards;
         submit(draft) => { root.session-dialog-submit(draft); }
         cancel => { root.session-dialog-cancel(); }
@@ -2647,12 +2688,16 @@ export component AppWindow inherits Window {
                     label: @tr("Username");
                     placeholder: "root";
                     value <=> root.cred-user;
+                    accepted => { root.cred-accept(); }
+                    canceled => { root.cred-reject(); }   // Esc cancels (#140-3)
                 }
                 if root.cred-need-password : LabeledInput {
                     label: @tr("Password");
                     placeholder: "••••••••";
                     password: true;
                     value <=> root.cred-password;
+                    accepted => { root.cred-accept(); }
+                    canceled => { root.cred-reject(); }   // Esc cancels (#140-3)
                 }
                 CheckBox {
                     text: @tr("Remember for this session");
@@ -2674,6 +2719,74 @@ export component AppWindow inherits Window {
         }
     }
 
+    // MFA / keyboard-interactive prompt (#86-MFA). A bastion (JumpServer with MFA
+    // forced on) challenges for a verification code mid-login; backdrop / Cancel
+    // abort the connect.
+    if root.mfa-prompt-open : Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: #000000aa;
+        TouchArea { clicked => { root.mfa-cancel(); } }
+        Rectangle {
+            width: 360px;
+            height: mfa-card.preferred-height;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Theme.bg-panel;
+            border-radius: Theme.radius-lg;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000080;
+            TouchArea {}   // swallow clicks inside the card
+            mfa-card := VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+                Text {
+                    text: root.lang-en ? "Two-factor verification" : "双重验证 (MFA)";
+                    color: Theme.text-primary;
+                    font-size: Theme.fs-xl;
+                    font-weight: 600;
+                }
+                Text {
+                    text: root.mfa-host;
+                    color: Theme.text-secondary;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.fs-sm;
+                }
+                // The server's own prompt text (falls back to a generic hint).
+                Text {
+                    text: root.mfa-prompt != "" ? root.mfa-prompt
+                        : (root.lang-en ? "Enter your verification code" : "请输入验证码");
+                    color: Theme.text-secondary;
+                    font-size: Theme.fs-sm;
+                    wrap: word-wrap;
+                }
+                code-input := LabeledInput {
+                    label: root.lang-en ? "Code" : "验证码";
+                    placeholder: "123456";
+                    password: !root.mfa-echo;
+                    value <=> root.mfa-answer;
+                    auto-focus: true;
+                    accepted => { root.mfa-submit(); }   // Enter submits
+                    canceled => { root.mfa-cancel(); }   // Esc cancels (#140-3)
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    GhostButton {
+                        text: @tr("Cancel");
+                        clicked => { root.mfa-cancel(); }
+                    }
+                    PrimaryButton {
+                        text: root.lang-en ? "Verify" : "验证";
+                        clicked => { root.mfa-submit(); }
+                    }
+                }
+            }
+        }
+    }
+
     // --- Interface settings (modal overlay) -------------------------------
     // Embedded in the main window (not a detached window), so it can't be
     // dragged outside the parent. The dim backdrop + a focus-grabbing scope make
@@ -2683,10 +2796,14 @@ export component AppWindow inherits Window {
         width: 100%;
         height: 100%;
         background: #00000080;            // dim backdrop
-        // Grab focus and swallow keys so nothing leaks to the terminal beneath.
+        // Grab focus and swallow keys so nothing leaks to the terminal beneath;
+        // Esc closes the panel (#140-3).
         FocusScope {
             init => { self.focus(); }
-            key-pressed(e) => { accept }
+            key-pressed(e) => {
+                if (e.text == Key.Escape) { root.interface-open = false; }
+                accept
+            }
             key-released(e) => { accept }
         }
         // Modal: clicking the backdrop does nothing (only the ✕ closes it).

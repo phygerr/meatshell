@@ -682,6 +682,25 @@ pub fn run() -> Result<()> {
         });
     }
 
+    // MFA / keyboard-interactive prompt (#86-MFA): the user enters the
+    // verification code (or cancels); the answer unblocks the SSH/SFTP auth.
+    {
+        let weak = window.as_weak();
+        window.on_mfa_submit(move || {
+            if let Some(w) = weak.upgrade() {
+                resolve_front_mfa(&w, true);
+            }
+        });
+    }
+    {
+        let weak = window.as_weak();
+        window.on_mfa_cancel(move || {
+            if let Some(w) = weak.upgrade() {
+                resolve_front_mfa(&w, false);
+            }
+        });
+    }
+
     // NIC selector: remember the user's choice for the active tab and refresh.
     {
         let weak = window.as_weak();
@@ -875,6 +894,20 @@ pub fn run() -> Result<()> {
         },
     );
 
+    // --- Window activity, for idle-CPU throttling (#127) ----------------
+    // Idle terminals shouldn't burn CPU: pause the sampler when the window is
+    // minimized / occluded, throttle it when it's merely unfocused, and stop the
+    // cursor blink whenever the window isn't focused (mirrors what Tabby / Windows
+    // Terminal do). The winit event handler below updates this; the blink reads
+    // Theme.window-focused.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum WinActivity {
+        Active,     // focused & visible → full rate
+        Background, // visible but unfocused → throttled
+        Hidden,     // minimized / occluded → paused
+    }
+    let activity = Rc::new(std::cell::Cell::new(WinActivity::Active));
+
     // --- System sampler (1 Hz) ------------------------------------------
     let sampler = Rc::new(Mutex::new(SystemSampler::new()));
     let weak = window.as_weak();
@@ -882,11 +915,25 @@ pub fn run() -> Result<()> {
     let tick_statuses = tab_statuses.clone();
     let tick_local = local_snap.clone();
     let tick_net = local_net_hist.clone();
+    let tick_activity = activity.clone();
+    let mut bg_tick = 0u32;
     let timer = slint::Timer::default();
     timer.start(
         slint::TimerMode::Repeated,
         SystemSampler::recommended_interval(),
         move || {
+            // Skip the (non-trivial) sysinfo refresh + sidebar repaint when no one
+            // is looking, and back off to ~5 s when the window is in the background.
+            match tick_activity.get() {
+                WinActivity::Hidden => return,
+                WinActivity::Background => {
+                    bg_tick = bg_tick.wrapping_add(1);
+                    if bg_tick % 5 != 0 {
+                        return;
+                    }
+                }
+                WinActivity::Active => {}
+            }
             let snap = {
                 let mut s = tick_sampler.lock().expect("sampler poisoned");
                 s.sample()
@@ -922,14 +969,46 @@ pub fn run() -> Result<()> {
         let sh = sftp_handles.clone();
         let close_handles = handles.clone();
         let ev_store = store.clone();
+        let ev_activity = activity.clone();
+        // Track the inputs that make up WinActivity; recompute on each change.
+        let mut focused = true;
+        let mut minimized = false;
+        let mut occluded = false;
         window.window().on_winit_window_event(move |_w, event| {
+            // Recompute window activity, push it to the shared cell, and update
+            // Theme.window-focused (gates the cursor blink) (#127).
+            let apply_activity = |focused: bool, minimized: bool, occluded: bool| {
+                let act = if minimized || occluded {
+                    WinActivity::Hidden
+                } else if focused {
+                    WinActivity::Active
+                } else {
+                    WinActivity::Background
+                };
+                ev_activity.set(act);
+                if let Some(win) = weak.upgrade() {
+                    win.set_window_focused(act == WinActivity::Active);
+                }
+            };
             match event {
                 WEvent::DroppedFile(path) => {
                     if let Some(win) = weak.upgrade() {
                         handle_file_drop(&win, &sh, path.to_string_lossy().to_string());
                     }
                 }
-                WEvent::Resized(_) => {
+                WEvent::Focused(f) => {
+                    focused = *f;
+                    apply_activity(focused, minimized, occluded);
+                }
+                WEvent::Occluded(o) => {
+                    occluded = *o;
+                    apply_activity(focused, minimized, occluded);
+                }
+                WEvent::Resized(size) => {
+                    // A 0-sized resize is how Windows reports a minimize; track it
+                    // so we pause the sampler while minimized (#127).
+                    minimized = size.width == 0 || size.height == 0;
+                    apply_activity(focused, minimized, occluded);
                     // Keep the maximize/restore icon (and resize-edge gating) in
                     // sync when the OS changes the window state (#119).
                     if let Some(win) = weak.upgrade() {
@@ -1340,6 +1419,7 @@ fn wire_session_callbacks(
             w.set_dialog_stop_bits("1".into());
             w.set_dialog_parity("none".into());
             w.set_dialog_flow("none".into());
+            w.set_dialog_disable_shell_integration(false);
             w.set_dialog_editing(false);
             w.set_dialog_open(true);
         }
@@ -1489,6 +1569,7 @@ fn wire_session_callbacks(
                 w.set_dialog_stop_bits(session.stop_bits.to_string().into());
                 w.set_dialog_parity(session.parity.clone().into());
                 w.set_dialog_flow(session.flow_control.clone().into());
+                w.set_dialog_disable_shell_integration(session.disable_shell_integration);
                 w.set_dialog_editing(true);
                 w.set_dialog_open(true);
             }
@@ -1717,6 +1798,7 @@ fn wire_session_callbacks(
                 parity: draft.parity.to_string(),
                 flow_control: draft.flow_control.to_string(),
                 forwards: edit_forwards.borrow().clone(),
+                disable_shell_integration: draft.disable_shell_integration,
             };
             {
                 let mut s = store.borrow_mut();
@@ -3084,6 +3166,15 @@ fn apply_session_event_to_window(
         } => {
             enqueue_cred_prompt(win, session_id, host, user, need_user, need_password, responder);
         }
+        SessionEvent::MfaPrompt {
+            session_id,
+            host,
+            prompt,
+            echo,
+            responder,
+        } => {
+            enqueue_mfa_prompt(win, session_id, host, prompt, echo, responder);
+        }
         SessionEvent::CommandRan(cmd) => {
             // A command typed directly in the terminal, captured via the shell
             // hook (#113). Record it in the same command-box history, reusing the
@@ -3385,6 +3476,98 @@ fn persist_credentials(
             }
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// MFA / keyboard-interactive prompt (#86-MFA)
+// ---------------------------------------------------------------------------
+
+/// One queued MFA challenge. Concurrent connections for the same session (the
+/// shell and its SFTP channel) that hit the same prompt collapse into a single
+/// dialog whose answer fans out to every waiting `responder`.
+struct PendingMfa {
+    session_id: String,
+    host: String,
+    prompt: String,
+    echo: bool,
+    responders: Vec<crate::ssh::MfaResponder>,
+}
+
+thread_local! {
+    static MFA_QUEUE: RefCell<VecDeque<PendingMfa>> = RefCell::new(VecDeque::new());
+}
+
+/// Queue an MFA prompt: a concurrent connection for the same session (the shell
+/// and its SFTP channel both hitting the prompt at once) merges into the open
+/// dialog so the code is only typed once; otherwise enqueue (and show it now if
+/// nothing else is up). We deliberately do NOT cache answers across attempts —
+/// a wrong code must re-prompt on reconnect, not be silently replayed.
+fn enqueue_mfa_prompt(
+    win: &AppWindow,
+    session_id: String,
+    host: String,
+    prompt: String,
+    echo: bool,
+    responder: crate::ssh::MfaResponder,
+) {
+    let show_now = MFA_QUEUE.with(|q| {
+        let mut q = q.borrow_mut();
+        if let Some(p) = q.iter_mut().find(|p| p.session_id == session_id) {
+            p.responders.push(responder);
+            return false;
+        }
+        let was_empty = q.is_empty();
+        q.push_back(PendingMfa {
+            session_id,
+            host,
+            prompt,
+            echo,
+            responders: vec![responder],
+        });
+        was_empty
+    });
+    if show_now {
+        show_front_mfa(win);
+    }
+}
+
+/// Populate the MFA dialog from the front prompt and open it.
+fn show_front_mfa(win: &AppWindow) {
+    MFA_QUEUE.with(|q| {
+        if let Some(p) = q.borrow().front() {
+            win.set_mfa_host(p.host.clone().into());
+            win.set_mfa_prompt(p.prompt.clone().into());
+            win.set_mfa_echo(p.echo);
+            win.set_mfa_answer("".into());
+            win.set_mfa_prompt_open(true);
+        }
+    });
+}
+
+/// Apply the user's answer to the front MFA prompt (or cancel), then show the
+/// next prompt or close.
+fn resolve_front_mfa(win: &AppWindow, accept: bool) {
+    let answer: Option<String> = if accept {
+        Some(win.get_mfa_answer().to_string())
+    } else {
+        None
+    };
+    let has_next = MFA_QUEUE.with(|q| {
+        let mut q = q.borrow_mut();
+        if let Some(p) = q.pop_front() {
+            for r in &p.responders {
+                r.respond(answer.clone());
+            }
+        }
+        !q.is_empty()
+    });
+    // Don't leave the typed code lingering in the UI property.
+    win.set_mfa_answer("".into());
+    if has_next {
+        show_front_mfa(win);
+    } else {
+        win.set_mfa_prompt_open(false);
+    }
 }
 
 // ---------------------------------------------------------------------------
