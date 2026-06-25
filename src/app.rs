@@ -5878,19 +5878,22 @@ impl TermBuffer {
                     last_content = r as i32;
                 }
                 for hs in runs {
-                    let hl = highlight_override(&hs.text, self.is_dark)
-                        .unwrap_or(slint::Color::default());
-                    spans.push(TermSpan {
-                        cjk: contains_cjk(&hs.text),
-                        text: hs.text.into(),
-                        fg: vt_color_to_slint(hs.fg, hs.bold, self.is_dark),
-                        bg: vt_bg_to_slint(hs.bg, self.is_dark),
-                        bold: hs.bold,
-                        row: r as i32,
-                        col: hs.col,
-                        cells: hs.cells,
-                        highlight: hl,
-                    });
+                    let base_fg = vt_color_to_slint(hs.fg, hs.bold, self.is_dark);
+                    let base_bg = vt_bg_to_slint(hs.bg, self.is_dark);
+                    let segs = highlight_segments(&hs.text, self.is_dark);
+                    for seg in segs {
+                        spans.push(TermSpan {
+                            cjk: contains_cjk(&seg.text),
+                            text: seg.text.into(),
+                            fg: base_fg,
+                            bg: base_bg,
+                            bold: hs.bold,
+                            row: r as i32,
+                            col: hs.col + seg.char_off as i32,
+                            cells: seg.char_cnt as i32,
+                            highlight: seg.color.unwrap_or(slint::Color::default()),
+                        });
+                    }
                 }
                 displayed.push(plain.trim_end().to_string());
             }
@@ -5933,19 +5936,22 @@ impl TermBuffer {
                 &live[idx - hist_len]
             };
             for hs in &line.1 {
-                let hl = highlight_override(&hs.text, self.is_dark)
-                    .unwrap_or(slint::Color::default());
-                spans.push(TermSpan {
-                    text: hs.text.clone().into(),
-                    fg: vt_color_to_slint(hs.fg, hs.bold, self.is_dark),
-                    bg: vt_bg_to_slint(hs.bg, self.is_dark),
-                    bold: hs.bold,
-                    row: d as i32,
-                    col: hs.col,
-                    cells: hs.cells,
-                    cjk: contains_cjk(&hs.text),
-                    highlight: hl,
-                });
+                let base_fg = vt_color_to_slint(hs.fg, hs.bold, self.is_dark);
+                let base_bg = vt_bg_to_slint(hs.bg, self.is_dark);
+                let segs = highlight_segments(&hs.text, self.is_dark);
+                for seg in segs {
+                    spans.push(TermSpan {
+                        text: seg.text.clone().into(),
+                        fg: base_fg,
+                        bg: base_bg,
+                        bold: hs.bold,
+                        row: d as i32,
+                        col: hs.col + seg.char_off as i32,
+                        cells: seg.char_cnt as i32,
+                        cjk: contains_cjk(&seg.text),
+                        highlight: seg.color.unwrap_or(slint::Color::default()),
+                    });
+                }
             }
             displayed.push(line.0.trim_end().to_string());
         }
@@ -5986,119 +5992,310 @@ fn contains_cjk(s: &str) -> bool {
     })
 }
 
-/// Pattern-based syntax highlighting for terminal spans.
-///
-/// Checks the span text against a list of known keywords and format patterns
-/// (error/success/warning, log levels, IP addresses, HTTP status codes, etc.)
-/// and returns an override colour when a match is found. The caller should use
-/// this colour instead of the span's ANSI foreground.
-///
-/// Returns `None` when no pattern matches (keep the original ANSI colour).
-fn highlight_override(text: &str, is_dark: bool) -> Option<slint::Color> {
+/// One segment of a terminal span after keyword splitting.
+struct SpanSeg {
+    text: String,
+    char_off: usize,  // character offset within the original span
+    char_cnt: usize,  // number of characters (= grid cells for ASCII)
+    color: Option<slint::Color>,
+}
+
+/// Split a span's text at keyword boundaries and apply pattern-based
+/// highlighting. Returns one or more `SpanSeg`s that together cover the
+/// entire input text. Only the keyword portions get a highlight colour;
+/// surrounding text keeps `color = None` (use the original ANSI fg).
+fn highlight_segments(text: &str, is_dark: bool) -> Vec<SpanSeg> {
     let t = text.trim();
     if t.is_empty() {
-        return None;
+        return vec![SpanSeg {
+            text: text.to_string(),
+            char_off: 0,
+            char_cnt: text.chars().count(),
+            color: None,
+        }];
     }
     let low = t.to_ascii_lowercase();
 
-    // Helper: true if `keyword` appears as a whole word in `low`.
-    let has_word = |keyword: &str| -> bool {
-        let haystack = low.as_str();
-        let needle = keyword;
-        let mut start = 0;
-        while let Some(pos) = haystack[start..].find(needle) {
-            let abs = start + pos;
-            let before_ok = abs == 0
-                || !haystack.as_bytes()[abs - 1].is_ascii_alphanumeric();
-            let after_ok = abs + needle.len() >= haystack.len()
-                || !haystack.as_bytes()[abs + needle.len()].is_ascii_alphanumeric();
-            if before_ok && after_ok {
-                return true;
+    // --- Keyword patterns (split the span at match boundaries) -----------
+    // Each entry: (keyword, colour).
+    let keywords: &[(&str, slint::Color)] = &[
+        // Error → red
+        ("error",       if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        ("failed",      if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        ("fatal",       if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        ("exception",   if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        ("panic",       if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        ("critical",    if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        ("abort",       if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        ("denied",      if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        ("rejected",    if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        ("refused",     if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        // Success → green
+        ("success",     if is_dark { clr(0x23,0xd1,0x8b) } else { clr(0x2e,0x7d,0x32) }),
+        ("succeeded",   if is_dark { clr(0x23,0xd1,0x8b) } else { clr(0x2e,0x7d,0x32) }),
+        ("passed",      if is_dark { clr(0x23,0xd1,0x8b) } else { clr(0x2e,0x7d,0x32) }),
+        ("complete",    if is_dark { clr(0x23,0xd1,0x8b) } else { clr(0x2e,0x7d,0x32) }),
+        ("completed",   if is_dark { clr(0x23,0xd1,0x8b) } else { clr(0x2e,0x7d,0x32) }),
+        ("done",        if is_dark { clr(0x23,0xd1,0x8b) } else { clr(0x2e,0x7d,0x32) }),
+        ("ok",          if is_dark { clr(0x23,0xd1,0x8b) } else { clr(0x2e,0x7d,0x32) }),
+        ("accepted",    if is_dark { clr(0x23,0xd1,0x8b) } else { clr(0x2e,0x7d,0x32) }),
+        // Warning → yellow
+        ("warn",        if is_dark { clr(0xe5,0xe5,0x10) } else { clr(0xbf,0x8c,0x00) }),
+        ("warning",     if is_dark { clr(0xe5,0xe5,0x10) } else { clr(0xbf,0x8c,0x00) }),
+        ("deprecated",  if is_dark { clr(0xe5,0xe5,0x10) } else { clr(0xbf,0x8c,0x00) }),
+        ("caution",     if is_dark { clr(0xe5,0xe5,0x10) } else { clr(0xbf,0x8c,0x00) }),
+        // Network status → cyan
+        ("up",          if is_dark { clr(0x11,0xa8,0xcd) } else { clr(0x00,0x83,0x8f) }),
+        ("down",        if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        ("online",      if is_dark { clr(0x11,0xa8,0xcd) } else { clr(0x00,0x83,0x8f) }),
+        ("offline",     if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        ("connected",   if is_dark { clr(0x23,0xd1,0x8b) } else { clr(0x2e,0x7d,0x32) }),
+        ("disconnected",if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        ("reachable",   if is_dark { clr(0x23,0xd1,0x8b) } else { clr(0x2e,0x7d,0x32) }),
+        ("unreachable", if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        ("timeout",     if is_dark { clr(0xe5,0xe5,0x10) } else { clr(0xbf,0x8c,0x00) }),
+        // Process status → green
+        ("started",     if is_dark { clr(0x23,0xd1,0x8b) } else { clr(0x2e,0x7d,0x32) }),
+        ("stopped",     if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        ("running",     if is_dark { clr(0x23,0xd1,0x8b) } else { clr(0x2e,0x7d,0x32) }),
+        ("active",      if is_dark { clr(0x23,0xd1,0x8b) } else { clr(0x2e,0x7d,0x32) }),
+        ("inactive",    if is_dark { clr(0x91,0x96,0xa3) } else { clr(0xae,0xae,0xb2) }),
+        ("dead",        if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        // Permission / access
+        ("permission",  if is_dark { clr(0xe5,0xe5,0x10) } else { clr(0xbf,0x8c,0x00) }),
+        ("forbidden",   if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+        ("unauthorized",if is_dark { clr(0xf1,0x4c,0x4c) } else { clr(0xd3,0x2f,0x2f) }),
+    ];
+
+    // Find the first whole-word keyword match in `low`.
+    // Returns (keyword, match_byte_start_in_trimmed, match_byte_end_in_trimmed).
+    fn find_keyword<'a>(
+        haystack: &str,
+        keywords: &[(&'a str, slint::Color)],
+    ) -> Option<(&'a str, usize, usize)> {
+        for &(kw, _) in keywords {
+            let mut start = 0;
+            while let Some(pos) = haystack[start..].find(kw) {
+                let abs = start + pos;
+                let before_ok = abs == 0
+                    || !haystack.as_bytes()[abs - 1].is_ascii_alphanumeric();
+                let after_ok = abs + kw.len() >= haystack.len()
+                    || !haystack.as_bytes()[abs + kw.len()].is_ascii_alphanumeric();
+                if before_ok && after_ok {
+                    return Some((kw, abs, abs + kw.len()));
+                }
+                start = abs + 1;
             }
-            start = abs + 1;
         }
-        false
-    };
-
-    // Error keywords → red
-    for kw in ["error", "failed", "fatal", "exception", "panic", "abort", "critical"] {
-        if has_word(kw) {
-            return Some(if is_dark { slint::Color::from_rgb_u8(0xf1, 0x4c, 0x4c) }
-                        else      { slint::Color::from_rgb_u8(0xd3, 0x2f, 0x2f) });
-        }
-    }
-    // Success keywords → green
-    for kw in ["success", "succeeded", "passed", "complete", "completed", "done"] {
-        if has_word(kw) {
-            return Some(if is_dark { slint::Color::from_rgb_u8(0x23, 0xd1, 0x8b) }
-                        else      { slint::Color::from_rgb_u8(0x2e, 0x7d, 0x32) });
-        }
-    }
-    // Warning keywords → yellow
-    for kw in ["warn", "warning", "deprecated", "caution", "attention"] {
-        if has_word(kw) {
-            return Some(if is_dark { slint::Color::from_rgb_u8(0xe5, 0xe5, 0x10) }
-                        else      { slint::Color::from_rgb_u8(0xbf, 0x8c, 0x00) });
-        }
-    }
-    // Log level prefixes (e.g. "[INFO]", "ERROR:", "WARN ") → yellow
-    for lvl in ["[info]", "[debug]", "[error]", "[warn]", "[fatal]", "[trace]",
-                "info:", "debug:", "error:", "warn:", "fatal:", "trace:"] {
-        if low.contains(lvl) {
-            return Some(if is_dark { slint::Color::from_rgb_u8(0xe5, 0xe5, 0x10) }
-                        else      { slint::Color::from_rgb_u8(0xbf, 0x8c, 0x00) });
-        }
+        None
     }
 
-    // IPv4 address → cyan
-    if looks_like_ipv4(t) {
-        return Some(if is_dark { slint::Color::from_rgb_u8(0x11, 0xa8, 0xcd) }
-                    else      { slint::Color::from_rgb_u8(0x00, 0x83, 0x8f) });
+    // Try to find a keyword and split the span at its boundaries.
+    if let Some((kw, mb_start, _mb_end)) = find_keyword(&low, keywords) {
+        let kw_color = keywords.iter().find(|&&(k, _)| k == kw).unwrap().1;
+        let match_char_start = low[..mb_start].chars().count();
+        let match_char_cnt = kw.chars().count();
+        let total_chars = t.chars().count();
+        let mut result = Vec::new();
+        // Prefix (before the keyword).
+        if match_char_start > 0 {
+            let prefix: String = t.chars().take(match_char_start).collect();
+            result.push(SpanSeg {
+                text: prefix,
+                char_off: 0,
+                char_cnt: match_char_start,
+                color: None,
+            });
+        }
+        // The keyword itself.
+        let kw_text: String = t.chars().skip(match_char_start).take(match_char_cnt).collect();
+        result.push(SpanSeg {
+            text: kw_text,
+            char_off: match_char_start,
+            char_cnt: match_char_cnt,
+            color: Some(kw_color),
+        });
+        // Suffix (after the keyword).
+        let suffix_start = match_char_start + match_char_cnt;
+        if suffix_start < total_chars {
+            let suffix: String = t.chars().skip(suffix_start).collect();
+            result.push(SpanSeg {
+                text: suffix,
+                char_off: suffix_start,
+                char_cnt: total_chars - suffix_start,
+                color: None,
+            });
+        }
+        // Restore any leading/trailing whitespace that was trimmed.
+        return with_trim_padding(text, t, result);
     }
-    // IPv6 address → cyan
+
+    // --- Format patterns (highlight the whole span if it's mainly the pattern)
+    // IPv4 address embedded in the span.
+    if let Some((start, end)) = find_ipv4_in(t) {
+        let ip_color = if is_dark { clr(0x11,0xa8,0xcd) } else { clr(0x00,0x83,0x8f) };
+        let char_start = t[..start].chars().count();
+        let ip_text = &t[start..end];
+        let char_cnt = ip_text.chars().count();
+        let total = t.chars().count();
+        let mut result = Vec::new();
+        if char_start > 0 {
+            let p: String = t.chars().take(char_start).collect();
+            result.push(SpanSeg { text: p, char_off: 0, char_cnt: char_start, color: None });
+        }
+        result.push(SpanSeg {
+            text: ip_text.to_string(),
+            char_off: char_start,
+            char_cnt,
+            color: Some(ip_color),
+        });
+        let after = char_start + char_cnt;
+        if after < total {
+            let s: String = t.chars().skip(after).collect();
+            result.push(SpanSeg { text: s, char_off: after, char_cnt: total - after, color: None });
+        }
+        return with_trim_padding(text, t, result);
+    }
+    // Pure IPv6 token.
     if t.contains(':') && t.len() >= 3 && t.len() <= 45
         && t.chars().all(|c| c.is_ascii_hexdigit() || c == ':')
         && t.matches(':').count() >= 2
     {
-        return Some(if is_dark { slint::Color::from_rgb_u8(0x11, 0xa8, 0xcd) }
-                    else      { slint::Color::from_rgb_u8(0x00, 0x83, 0x8f) });
+        let c = if is_dark { clr(0x11,0xa8,0xcd) } else { clr(0x00,0x83,0x8f) };
+        return with_trim_padding(text, t, vec![SpanSeg {
+            text: t.to_string(),
+            char_off: 0,
+            char_cnt: t.chars().count(),
+            color: Some(c),
+        }]);
     }
-
-    // HTTP status patterns → blue
-    if low.starts_with("http/") || low.starts_with("http ") || low.starts_with("https ") {
-        return Some(if is_dark { slint::Color::from_rgb_u8(0x3b, 0x8e, 0xea) }
-                    else      { slint::Color::from_rgb_u8(0x15, 0x65, 0xc0) });
-    }
-    if low.starts_with("status:") || low.starts_with("status ") {
-        return Some(if is_dark { slint::Color::from_rgb_u8(0x3b, 0x8e, 0xea) }
-                    else      { slint::Color::from_rgb_u8(0x15, 0x65, 0xc0) });
-    }
-
-    // Exit status → red
-    if low.starts_with("exit code") || low.starts_with("exit status") || low.starts_with("exit:") {
-        return Some(if is_dark { slint::Color::from_rgb_u8(0xf1, 0x4c, 0x4c) }
-                    else      { slint::Color::from_rgb_u8(0xd3, 0x2f, 0x2f) });
-    }
-
-    // MAC address → magenta
+    // MAC address.
     if t.len() == 17 && t.chars().enumerate().all(|(i, c)| {
         c.is_ascii_hexdigit() || ((i + 1) % 3 == 0 && c == ':')
     }) && t.matches(':').count() == 5
     {
-        return Some(if is_dark { slint::Color::from_rgb_u8(0xd6, 0x70, 0xd6) }
-                    else      { slint::Color::from_rgb_u8(0x8e, 0x24, 0xaa) });
+        let c = if is_dark { clr(0xd6,0x70,0xd6) } else { clr(0x8e,0x24,0xaa) };
+        return with_trim_padding(text, t, vec![SpanSeg {
+            text: t.to_string(),
+            char_off: 0,
+            char_cnt: t.chars().count(),
+            color: Some(c),
+        }]);
+    }
+    // HTTP status line.
+    if low.starts_with("http/") || low.starts_with("http ") || low.starts_with("https ") {
+        let c = if is_dark { clr(0x3b,0x8e,0xea) } else { clr(0x15,0x65,0xc0) };
+        return with_trim_padding(text, t, vec![SpanSeg {
+            text: t.to_string(), char_off: 0, char_cnt: t.chars().count(), color: Some(c),
+        }]);
+    }
+    // Log level prefixes.
+    for lvl in &["[info]", "[debug]", "[error]", "[warn]", "[fatal]", "[trace]",
+                 "info:", "debug:", "error:", "warn:", "fatal:", "trace:"] {
+        if low.contains(lvl) {
+            let c = if is_dark { clr(0xe5,0xe5,0x10) } else { clr(0xbf,0x8c,0x00) };
+            return with_trim_padding(text, t, vec![SpanSeg {
+                text: t.to_string(), char_off: 0, char_cnt: t.chars().count(), color: Some(c),
+            }]);
+        }
     }
 
-    None
+    // No match — return the original text unmodified.
+    vec![SpanSeg {
+        text: text.to_string(),
+        char_off: 0,
+        char_cnt: text.chars().count(),
+        color: None,
+    }]
 }
 
-/// Quick check: does `s` look like an IPv4 address (e.g. "192.168.1.1")?
-fn looks_like_ipv4(s: &str) -> bool {
-    let parts: Vec<&str> = s.split('.').collect();
-    if parts.len() != 4 {
-        return false;
+/// Helper: build a `slint::Color` from RGB.
+fn clr(r: u8, g: u8, b: u8) -> slint::Color {
+    slint::Color::from_rgb_u8(r, g, b)
+}
+
+/// Preserve leading/trailing whitespace from the original `full` text around
+/// the trimmed `inner` segments.
+fn with_trim_padding(full: &str, inner: &str, segs: Vec<SpanSeg>) -> Vec<SpanSeg> {
+    let lead = full.len() - full.trim_start().len();
+    let trail = full.len() - full.trim_end().len();
+    if lead == 0 && trail == 0 {
+        return segs;
     }
-    parts.iter().all(|p| p.parse::<u8>().is_ok())
+    let lead_s = &full[..lead];
+    let trail_s = &full[full.len() - trail..];
+    let lead_chars = lead_s.chars().count();
+    let inner_chars = inner.chars().count();
+    let mut result = Vec::new();
+    if lead > 0 {
+        result.push(SpanSeg {
+            text: lead_s.to_string(),
+            char_off: 0,
+            char_cnt: lead_chars,
+            color: None,
+        });
+    }
+    for mut seg in segs {
+        seg.char_off += lead_chars;
+        result.push(seg);
+    }
+    if trail > 0 {
+        result.push(SpanSeg {
+            text: trail_s.to_string(),
+            char_off: lead_chars + inner_chars,
+            char_cnt: trail_s.chars().count(),
+            color: None,
+        });
+    }
+    result
+}
+
+/// Find the byte range of the first IPv4 address embedded in `s`.
+/// Returns `(start, end)` where `s[start..end]` is the IP, or `None`.
+fn find_ipv4_in(s: &str) -> Option<(usize, usize)> {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    // Scan for a digit that could start an IP.
+    for i in 0..len {
+        if !bytes[i].is_ascii_digit() {
+            continue;
+        }
+        // Try to parse 4 dot-separated u8 groups from position i.
+        let mut pos = i;
+        let mut groups = 0u8;
+        let mut ok = true;
+        while groups < 4 {
+            if pos >= len || !bytes[pos].is_ascii_digit() {
+                ok = false;
+                break;
+            }
+            let start = pos;
+            while pos < len && bytes[pos].is_ascii_digit() {
+                pos += 1;
+            }
+            let num: u16 = s[start..pos].parse().ok()?;
+            if num > 255 {
+                ok = false;
+                break;
+            }
+            groups += 1;
+            if groups < 4 {
+                if pos >= len || bytes[pos] != b'.' {
+                    ok = false;
+                    break;
+                }
+                pos += 1; // skip the dot
+            }
+        }
+        if ok && groups == 4 {
+            // The byte after the last digit must not be alphanumeric (word boundary).
+            if pos < len && bytes[pos].is_ascii_alphanumeric() {
+                continue;
+            }
+            return Some((i, pos));
+        }
+    }
+    None
 }
 
 /// 16-colour ANSI palette for **dark** terminals (VS Code "Dark+" values).
