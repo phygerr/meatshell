@@ -15,7 +15,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use portable_pty::{CommandBuilder, NativePtySystem, PtyPair, PtySize, PtySystem};
+use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, PtySize, PtySystem};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use crate::config::Session;
@@ -98,16 +98,18 @@ async fn run_local(
     )));
 
     // Create a PTY pair.
-    let pty_system = NativePtySystem::default();
+    let pty_system = native_pty_system();
     let pty_size = PtySize {
         rows: initial_rows.max(1) as u16,
         cols: initial_cols.max(1) as u16,
         pixel_width: 0,
         pixel_height: 0,
     };
-    let PtyPair { master, slave } = pty_system
+    let pair = pty_system
         .openpty(pty_size)
         .map_err(|e| anyhow::anyhow!("{}: {e}", t("创建 PTY 失败", "failed to create PTY")))?;
+    let master = pair.master;
+    let slave = pair.slave;
 
     // Build the shell command.
     let (shell_path, shell_args) = resolve_shell();
