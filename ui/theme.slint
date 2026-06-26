@@ -124,26 +124,20 @@ export global Theme {
             ? (dark ? phyger-d-border-str : phyger-l-border-str)
             : (dark ? #4a4e59 : #c7c7cc);
 
-<<<<<<< HEAD
     out property <brush> text-primary:
         root.theme-id == "phyger"
             ? (dark ? phyger-d-text1 : phyger-l-text1)
             : (dark ? #e6e8ee : #1d1d1f);
+    // Light-mode secondary/muted darkened (#aeaeb2 → #7c7c82, #6e6e73 → #55555a):
+    // the old greys were too faint on the bright (frosted-wallpaper) background.
     out property <brush> text-secondary:
         root.theme-id == "phyger"
             ? (dark ? phyger-d-text2 : phyger-l-text2)
-            : (dark ? #b4b9c4 : #6e6e73);
+            : (dark ? #b4b9c4 : #55555a);
     out property <brush> text-muted:
         root.theme-id == "phyger"
             ? (dark ? phyger-d-text3 : phyger-l-text3)
-            : (dark ? #9196a3 : #aeaeb2);
-=======
-    out property <brush> text-primary:   dark ? #e6e8ee : #1d1d1f;
-    // Light-mode secondary/muted darkened (#aeaeb2 → #7c7c82, #6e6e73 → #55555a):
-    // the old greys were too faint on the bright (frosted-wallpaper) background.
-    out property <brush> text-secondary: dark ? #b4b9c4 : #55555a;
-    out property <brush> text-muted:     dark ? #9196a3 : #7c7c82;
->>>>>>> a45d3d3b62f54df3225519a2bee82a6d2e572ab1
+            : (dark ? #9196a3 : #7c7c82);
 
     out property <brush> accent:
         root.wallpaper-active ? root.wp-accent
