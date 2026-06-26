@@ -12,7 +12,7 @@ export struct PortFwd {
 export struct SessionDraft {
     id: string,
     name: string,
-    kind: string,      // "ssh" | "serial" | "telnet"
+    kind: string,      // "ssh" | "serial" | "telnet" | "local"
     host: string,
     port: int,
     user: string,
@@ -207,6 +207,11 @@ export component SessionDialog inherits Rectangle {
                         active: root.draft-kind == "telnet";
                         clicked => { root.draft-kind = "telnet"; }
                     }
+                    SegOption {
+                        label: @tr("Local");
+                        active: root.draft-kind == "local";
+                        clicked => { root.draft-kind = "local"; }
+                    }
                 }
             }
 
@@ -224,7 +229,7 @@ export component SessionDialog inherits Rectangle {
             }
 
             // ── SSH / Telnet share host + port ──────────────────────────────
-            if root.draft-kind != "serial" : HorizontalLayout {
+            if root.draft-kind != "serial" && root.draft-kind != "local" : HorizontalLayout {
                 spacing: 10px;
                 LabeledInput {
                     label: @tr("Host / IP");
@@ -241,7 +246,7 @@ export component SessionDialog inherits Rectangle {
             }
 
             // Inline error when a host-less SSH/Telnet session is submitted (#110).
-            if root.host-missing && root.draft-host == "" && root.draft-kind != "serial" : Text {
+            if root.host-missing && root.draft-host == "" && root.draft-kind != "serial" && root.draft-kind != "local" : Text {
                 text: @tr("Please enter a host / IP address.");
                 color: Theme.danger;
                 font-size: Theme.fs-sm;
@@ -407,7 +412,7 @@ export component SessionDialog inherits Rectangle {
             }
 
             // ── Advanced (collapsed by default): proxy + port forwarding ────
-            if root.draft-kind != "serial" : Rectangle {
+            if root.draft-kind != "serial" && root.draft-kind != "local" : Rectangle {
                 height: 26px;
                 adv-ta := TouchArea {
                     mouse-cursor: pointer;
@@ -433,7 +438,7 @@ export component SessionDialog inherits Rectangle {
             }
 
             // ── Optional outbound proxy (SSH / Telnet only) ─────────────────
-            if root.show-advanced && root.draft-kind != "serial" : VerticalLayout {
+            if root.show-advanced && root.draft-kind != "serial" && root.draft-kind != "local" : VerticalLayout {
                 spacing: 4px;
                 Text {
                     text: @tr("Proxy (optional)");
@@ -600,7 +605,7 @@ export component SessionDialog inherits Rectangle {
                     text: is-editing ? @tr("Save") : @tr("Create");
                     clicked => {
                         // SSH/Telnet need a host; block submit and flag it (#110).
-                        if (root.draft-kind != "serial" && root.draft-host == "") {
+                        if (root.draft-kind != "serial" && root.draft-kind != "local" && root.draft-host == "") {
                             root.host-missing = true;
                             return;
                         }

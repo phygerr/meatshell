@@ -1756,6 +1756,7 @@ fn wire_session_callbacks(
                 crate::config::SessionKind::Serial => {
                     format!("{} @{}", draft.serial_port, draft.baud_rate)
                 }
+                crate::config::SessionKind::Local => local_shell_basename(),
                 _ if draft.user.trim().is_empty() => draft.host.to_string(),
                 _ => format!("{}@{}", draft.user, draft.host),
             };
@@ -1928,8 +1929,9 @@ fn wire_session_callbacks(
                     format!("{} @{}", session.serial_port, session.baud_rate)
                 }
                 SessionKind::Telnet => format!("telnet {}:{}", session.host, session.port),
+                SessionKind::Local => local_shell_basename(),
             };
-            // Serial / Telnet have no SFTP side-channel.
+            // Serial / Telnet / Local have no SFTP side-channel.
             let has_sftp = session.kind == SessionKind::Ssh;
 
             // Seed the per-tab status so the sidebar shows "连接中 host" the
@@ -2026,6 +2028,24 @@ fn wire_session_callbacks(
 
 type NetHist = Arc<Mutex<Vec<f32>>>;
 
+/// Return the basename of the user's default shell (e.g. "bash", "cmd.exe").
+/// Used for auto-naming and the sidebar connection label of Local sessions.
+fn local_shell_basename() -> String {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| {
+        if cfg!(windows) {
+            "cmd.exe"
+        } else {
+            "/bin/sh"
+        }
+        .into()
+    });
+    shell
+        .rsplit(|c| c == '/' || c == '\\')
+        .next()
+        .unwrap_or("local")
+        .to_string()
+}
+
 /// Shared connection dependencies for `start_session_in_tab`. All fields are
 /// cheap clones (Arc / Weak / Rc), so connect and in-place reconnect can both
 /// build one and spawn workers for a tab (#79).
@@ -2064,6 +2084,13 @@ fn start_session_in_tab(tab_id: &str, session: Session, ctx: &ConnectCtx) {
             session.clone(),
         ),
         SessionKind::Telnet => crate::telnet::spawn_telnet_session(
+            ctx.runtime.handle(),
+            tab_id.to_string(),
+            session.clone(),
+            initial_cols,
+            initial_rows,
+        ),
+        SessionKind::Local => crate::local::spawn_local_session(
             ctx.runtime.handle(),
             tab_id.to_string(),
             session.clone(),
