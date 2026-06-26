@@ -124,6 +124,7 @@ export global Theme {
             ? (dark ? phyger-d-border-str : phyger-l-border-str)
             : (dark ? #4a4e59 : #c7c7cc);
 
+<<<<<<< HEAD
     out property <brush> text-primary:
         root.theme-id == "phyger"
             ? (dark ? phyger-d-text1 : phyger-l-text1)
@@ -136,6 +137,13 @@ export global Theme {
         root.theme-id == "phyger"
             ? (dark ? phyger-d-text3 : phyger-l-text3)
             : (dark ? #9196a3 : #aeaeb2);
+=======
+    out property <brush> text-primary:   dark ? #e6e8ee : #1d1d1f;
+    // Light-mode secondary/muted darkened (#aeaeb2 → #7c7c82, #6e6e73 → #55555a):
+    // the old greys were too faint on the bright (frosted-wallpaper) background.
+    out property <brush> text-secondary: dark ? #b4b9c4 : #55555a;
+    out property <brush> text-muted:     dark ? #9196a3 : #7c7c82;
+>>>>>>> a45d3d3b62f54df3225519a2bee82a6d2e572ab1
 
     out property <brush> accent:
         root.wallpaper-active ? root.wp-accent
@@ -166,6 +174,10 @@ export global Theme {
         root.theme-id == "phyger"
             ? (dark ? phyger-d-term-fg : phyger-l-term-fg)
             : (dark ? #d4d4d4 : #2d2d2f);
+
+    // True on macOS (set by Rust). App shortcuts use Cmd (⌘) here instead of
+    // Ctrl, so the physical Ctrl key stays free for the shell (^C/^X…) (#158).
+    in-out property <bool> is-mac: false;
 
     // Whether the app window is focused & visible. Rust drives this from winit
     // focus/minimize/occlusion events; the terminal cursor stops blinking when
